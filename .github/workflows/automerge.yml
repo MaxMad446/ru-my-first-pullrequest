@@ -17,22 +17,35 @@ on:
     types:
       - completed
   status: {}
+
 jobs:
   automerge:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          ref: ${{github.event.pull_request.head.ref}}
-          repository: ${{github.event.pull_request.head.repo.full_name}}
-          fetch-depth: 2
-      - name: Checking that workflow file did not change
-        run: git diff HEAD HEAD~1 --exit-code .github/workflows/automerge.yml
+      # 🔒 Этап 1: Проверяем, был ли изменён сам workflow-файл в PR
+      # Это критически важно для безопасности при использовании pull_request_target
+      - name: Check if workflow file was modified
+        if: github.event_name == 'pull_request_target'
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff --exit-code origin/${{ github.event.pull_request.base.ref }} HEAD -- .github/workflows/automerge.yml
+        continue-on-error: true
+        id: check_workflow
+
+      # 🔁 Если workflow был изменён — блокируем мерж
+      - name: Block merge if workflow was modified
+        if: steps.check_workflow.outcome != 'success'
+        run: |
+          echo "❌ PR modifies .github/workflows/automerge.yml. Blocking automerge for security."
+          exit 1
+
+      # ✅ Этап 2: Запуск automerge-action (без checkout!)
       - name: automerge
-        uses: "pascalgn/automerge-action@v0.14.3"
+        uses: pascalgn/automerge-action@v0.14.3
         env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MERGE_LABELS: ""
+          MERGE_METHOD: "squash"
           MERGE_DELETE_BRANCH: "true"
           MERGE_FORKS: "true"
+          UPDATE_METHOD: "rebase"
